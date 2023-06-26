@@ -2,7 +2,7 @@
 import pandas as pd
 from skmob import TrajDataFrame
 from skmob.preprocessing import detection, clustering
-from trajectory_report.settings import STAY_LOCATIONS_CONFIG, CLUSTERS_CONFIG
+from trajectory_report.config import STAY_LOCATIONS_CONFIG, CLUSTERS_CONFIG
 
 
 def prepare_clusters(coordinates: pd.DataFrame) -> pd.DataFrame:

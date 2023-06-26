@@ -1,7 +1,7 @@
 # (основной запрос отчетов)
 import pandas as pd
 from trajectory_report.report import construct_select as cs
-from trajectory_report import DB_ENGINE
+from trajectory_report.database import DB_ENGINE
 import datetime as dt
 from trajectory_report.report.ClusterGenerator import prepare_clusters
 from typing import Optional, List, Union

@@ -1,4 +1,4 @@
-from trajectory_report.settings import TOKENS_MTS
+from trajectory_report.config import TOKENS_MTS
 from trajectory_report.exceptions import MtsException
 import requests
 

@@ -1,10 +1,10 @@
-from trajectory_report.settings import TOKENS_MTS
+from trajectory_report.config import TOKENS_MTS
 import asyncio
 import aiohttp
 from trajectory_report.api.mts import get_subs_by_token, apiHttp, apiGetLocs
 import datetime as dt
 from trajectory_report.models import Coordinates
-from trajectory_report import DB_ENGINE
+from trajectory_report.database import DB_ENGINE
 from sqlalchemy import func, insert, select
 from sqlalchemy.orm import sessionmaker, Session
 from collections import defaultdict

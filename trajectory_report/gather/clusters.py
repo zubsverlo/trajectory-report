@@ -1,6 +1,6 @@
 from trajectory_report.models import Clusters, Coordinates
 from sqlalchemy import select, func
-from trajectory_report import DB_ENGINE
+from trajectory_report.database import DB_ENGINE
 import datetime as dt
 from typing import List
 import pandas as pd

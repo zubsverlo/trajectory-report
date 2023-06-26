@@ -1,5 +1,5 @@
 import requests
-from trajectory_report.settings import TOKEN_TELEGRAM, TELEGRAM_ADMIN_ID
+from trajectory_report.config import TOKEN_TELEGRAM, TELEGRAM_ADMIN_ID
 
 
 def notify_admin(text: str) -> int:

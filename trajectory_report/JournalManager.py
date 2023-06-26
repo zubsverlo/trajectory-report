@@ -18,7 +18,7 @@
 
 
 from trajectory_report.api.mts import get_subscribers
-from trajectory_report import DB_ENGINE
+from trajectory_report.database import DB_ENGINE
 import datetime as dt
 from trajectory_report.models import Employees, Statements, Journal, Division
 from sqlalchemy import select, update

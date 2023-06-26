@@ -2,7 +2,7 @@ import pandas as pd
 import datetime as dt
 from math import cos, asin, sqrt, pi
 from numpy import NaN
-from trajectory_report.settings import REPORT_BASE, STATS_CHECKOUT
+from trajectory_report.config import REPORT_BASE, STATS_CHECKOUT
 import io
 import xlsxwriter
 from typing import Optional, Union, List
