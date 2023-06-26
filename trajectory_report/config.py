@@ -4,7 +4,10 @@ import dotenv
 
 dotenv.load_dotenv()
 
-DB = os.getenv('DATABASE')
+if os.getenv('ENV') == 'production':
+    DB = os.getenv('DATABASE_PRODUCTION')
+else:
+    DB = os.getenv('DATABASE_DEVELOPMENT')
 
 
 TOKENS_MTS = {
