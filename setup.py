@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 
 setup(
@@ -6,7 +6,7 @@ setup(
     version='1.0',
     author='Arney',
     author_email='zub.sverlo@gmail.com',
-    packages=['trajectory_report'],
+    packages=find_packages(),
     install_requires=[
         'SQLAlchemy==2.0.12',
         'folium==0.12.1.post1',
