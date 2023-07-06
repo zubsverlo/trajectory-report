@@ -201,18 +201,16 @@ class MapMovements(OneEmployeeReport, MapsBase):
             report = self.report[['object', 'attend_number', 'datetime', 'duration']]
             report['duration'] = report.duration.apply(lambda x: str(x)[-8:])
             report['datetime'] = report.datetime.apply(lambda x: str(x)[-8:])
-            report = report.rename(columns={'object': "ПСУ",
-                                            'attend_number': "Посещение",
-                                            'datetime': "Время",
-                                            "duration": "Длит"})
+            report = report.rename(columns={'datetime': "time"})
             report = report.to_dict(orient='records')
         if self.analytics is not None:
             analytics = self.analytics[['available', 'min', 'max', 'duration']]
-            analytics['Нач.'] = analytics['min'].apply(lambda x: str(x)[-8:])
-            analytics['Кон.'] = analytics['max'].apply(lambda x: str(x)[-8:])
-            analytics['Длит'] = analytics['duration'].apply(lambda x: str(x)[-8:])
-            analytics['Сост'] = analytics['available'].apply(lambda x: 'ВКЛ' if x else "ВЫКЛ")
-            analytics = analytics[["Нач.", "Кон.", "Длит", "Сост"]]
+            analytics['start'] = analytics['min'].apply(lambda x: str(x)[-8:])
+            analytics['end'] = analytics['max'].apply(lambda x: str(x)[-8:])
+            analytics['duration'] = analytics['duration'].apply(lambda x: str(x)[-8:])
+            # analytics['status'] = analytics['available'].apply(lambda x: 'ON' if x else "OFF")
+            analytics['status'] = analytics['available']
+            analytics = analytics[["start", "end", "duration", "status"]]
             analytics = analytics.to_dict(orient='records')
 
         resp = {
