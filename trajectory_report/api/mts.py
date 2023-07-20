@@ -55,7 +55,7 @@ def delete_by_subscriberID(subscriberID, token):
         f"/v6/api/subscriberManagement/subscribers/{subscriberID}",
         headers=header)
     if r.status_code != 204:
-        raise MtsException('Cannot delete subscriber')
+        raise MtsException('Удалить сотрудника не получилось, попробуйте ещё.')
 
 
 def delete_subs(subs_to_remove: list):

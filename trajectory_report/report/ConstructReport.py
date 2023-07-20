@@ -51,8 +51,8 @@ class ReportDataGetter:
                 object_ids=object_ids
             ), conn)
             if not len(stmts):
-                raise ReportException(f'No statements found from '
-                                 f'{date_from} to {date_to}')
+                raise ReportException(f'Не найдено заявленных выходов в период '
+                                 f'с {date_from} до {date_to}')
             name_ids = stmts.name_id.unique().tolist()
 
             journal = pd.read_sql(cs.journal(name_ids), conn)
@@ -109,15 +109,15 @@ class OneEmployeeReportDataGetter:
             try:
                 subscriber_id = int(journal.subscriberID.iloc[0])
             except IndexError:
-                raise ReportException(f"Employee {name_id} does not have "
-                                f"any bounded subscriberID by {date}")
+                raise ReportException(
+                    f"За сотрудником не закреплено ни одного "
+                    f"устройства в этот день ({date})")
 
             locations = pd.read_sql(cs.locations_one_emp(date, subscriber_id),
                                     conn)
             valid_locations = locations[pd.notna(locations['locationDate'])]
             if not len(locations) or not len(valid_locations):
-                raise ReportException(f"SubscriberID '{subscriber_id}', "
-                                f"Name_id {name_id} "
-                                f"doesn't have any locations for {date}.")
+                raise ReportException(f"По данному сотруднику не обнаружено "
+                                      f"локаций за {date}.")
             clusters = prepare_clusters(valid_locations)
             return stmts, clusters, locations
