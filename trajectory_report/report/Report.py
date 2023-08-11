@@ -1,5 +1,7 @@
+import time
 import pandas as pd
 import datetime as dt
+import numpy as np
 from math import cos, asin, sqrt, pi
 from numpy import NaN
 from trajectory_report.config import REPORT_BASE, STATS_CHECKOUT
@@ -7,7 +9,7 @@ import io
 import xlsxwriter
 from typing import Optional, Union, List
 from trajectory_report.report.ConstructReport import OneEmployeeReportDataGetter
-from trajectory_report.report.ConstructReport import ReportDataGetter
+from trajectory_report.report.ConstructReport import report_data_factory
 
 
 class ReportBase:
@@ -29,6 +31,28 @@ class ReportBase:
         stmts_jrnl_clstrs = stmts_jrnl_clstrs[stmts_jrnl_clstrs['in_radius']]
         return stmts_jrnl_clstrs.reset_index()
 
+    def _calculate_distance_vectorized(self,
+                                       stmts_jrnl_clstrs: pd.DataFrame
+                                       ) -> pd.DataFrame:
+        """
+        Высчитывание дистанции между объектами и кластерами локаций.
+        Все кластеры, не входящие в заданный радиус, отбрасываются, так как
+        здесь формируются отчеты о посещениях.
+        """
+
+        # numpy массивы с координатами для вычисления дистанции
+        object_lat = np.array(stmts_jrnl_clstrs.latitude_object)
+        object_lon = np.array(stmts_jrnl_clstrs.longitude_object)
+        cluster_lat = np.array(stmts_jrnl_clstrs.latitude_clusters)
+        cluster_lon = np.array(stmts_jrnl_clstrs.longitude_clusters)
+
+        # По каждой строке высчитывается дистанция, в пределах радиуса - True.
+        distances = self.__distance_vectorized(object_lat, object_lon, cluster_lat, cluster_lon)
+        distances = [i <= REPORT_BASE['RADIUS'] / 1000 for i in distances]
+        stmts_jrnl_clstrs['in_radius'] = distances
+        stmts_jrnl_clstrs = stmts_jrnl_clstrs[stmts_jrnl_clstrs['in_radius']]
+        return stmts_jrnl_clstrs.reset_index()
+
     @staticmethod
     def __distance(lat1: float, lon1: float, lat2: float,
                    lon2: float) -> float:
@@ -37,6 +61,16 @@ class ReportBase:
             (lat2 - lat1) * p) / 2 + cos(lat1 * p) * cos(lat2 * p) * (
                     1 - cos((lon2 - lon1) * p)) / 2
         return 12742 * asin(sqrt(a))
+
+    @staticmethod
+    def __distance_vectorized(lat1: np.array, lon1: np.array,
+                              lat2: np.array, lon2: np.array
+                              ) -> np.array:
+        p = np.pi / 180
+        a = 0.5 - np.cos(
+            (lat2 - lat1) * p) / 2 + np.cos(lat1 * p) * np.cos(lat2 * p) * (
+                    1 - np.cos((lon2 - lon1) * p)) / 2
+        return 12742 * np.arcsin(np.sqrt(a))
 
     @staticmethod
     def _consolidate_time_periods(df):
@@ -59,6 +93,57 @@ class ReportBase:
         return df
 
     @staticmethod
+    def _consolidate_time_periods_vectorized(df):
+        """Объединение кластеров по периодам, версия с векторизацией.
+        Алгоритм ускорен в 500 раз по времени исполнения"""
+        # сортировка данных - ключевой этап
+        df = df.sort_values(
+            ['name_id', 'object_id', 'date', 'datetime'])
+
+        # leaving_date последующей строки меньше, чем текущей.
+        # Это означает, что последующий кластер охватывает период, который
+        # уже включен в текущий кластер. Такие строки (последующий кластер)
+        # не несут никакой ценности, поэтому мы их удаляем.
+        df['next_ld_is_less'] = df.groupby(['name_id', 'object_id', 'date']) \
+                                     ['leaving_datetime'].shift(-1) <= df[
+                                     'leaving_datetime']
+        # Смещаем bool на строку ниже, добавляя столбец
+        df['odd_line'] = df['next_ld_is_less'].shift(1)
+        # Удаляем столбец. fillna(False), чтобы покрыть образовавшийся NaT в
+        # первой строке при смещении bool вниз.
+        df = df[~df['odd_line'].fillna(False)]
+
+        # time_difference - это разница между leaving_datetime текущей строки
+        # и datetime последующей. Так мы определяем, относить ли два кластера
+        # к одному периоду, чтобы совместить их в один.
+        # Выше мы удалили все строки, где leaving_datetime мог быть ниже
+        # текущего, поэтому, если это значение меньше или равно допускаемого
+        # времени между двумя кластерами, то эти кластеры можно объединить.
+        df['time_difference'] = df.groupby(['name_id', 'object_id', 'date']) \
+                                    ['datetime'].shift(-1) - df[
+                                    'leaving_datetime']
+        # bool маска для нахождения кластеров для объединения
+        mask = (df['time_difference'] <=
+                dt.timedelta(minutes=REPORT_BASE['MINS_BETWEEN_ATTENDS']))
+
+        # так как может возникнуть целая последовательность кластеров для
+        # объединения, во избежание излишних итераций, leaving_datetime для
+        # всех строк, кроме последней (там гарантированно наибольшее значение),
+        # очищается, чтобы затем применить метод bfill - заполнение последующих
+        # пустых ячеек известным значением, но в направлении снизу вверх
+        df.loc[mask, 'leaving_datetime'] = pd.NaT
+        df['leaving_datetime'] = df['leaving_datetime'].bfill()
+
+        # В завершение, снова удаление всех последующих кластеров, охватывающих
+        # тот же период, что и текущий (как в начале алгоритма)
+        df['next_ld_is_less'] = df.groupby(['name_id', 'object_id', 'date']) \
+                                     ['leaving_datetime'].shift(-1) <= df[
+                                     'leaving_datetime']
+        df['odd_line'] = df['next_ld_is_less'].shift(1)
+        df = df[~df['odd_line'].fillna(False)]
+        return df
+
+    @staticmethod
     def _set_count_and_duration(rep) -> pd.DataFrame:
         """Высчитать итоговое время и количество посещений"""
         # Длительность в каждой строке
@@ -77,7 +162,7 @@ class ReportBase:
         return rep
 
 
-class Report(ReportDataGetter, ReportBase):
+class Report(ReportBase):
     """
     Данный объект является контейнером из различных DataFrame.
     При инициализации требуются DataFrame таблицы:
@@ -109,8 +194,19 @@ class Report(ReportDataGetter, ReportBase):
                  name_ids: Optional[List[int]] = None,
                  object_ids: Optional[List[int]] = None,
                  counts: bool = False,
+                 use_cache: bool = True
                  ):
-        super().__init__(date_from, date_to, division, name_ids, object_ids)
+        data = report_data_factory(date_from, date_to, division,
+                                   name_ids, object_ids, use_cache=use_cache)
+        self._date_from = dt.date.fromisoformat(str(date_from))
+        self._date_to = dt.date.fromisoformat(str(date_to))
+
+        self._stmts = data.get('_stmts')
+        self._journal = data.get('_journal')
+        self._schedules = data.get('_schedules')
+        self._serves = data.get('_serves')
+        self._clusters = data.get('_clusters')
+
         self._counts = counts
 
         # Эти параметры заполняются при выполнении метода _build_report
@@ -126,7 +222,7 @@ class Report(ReportDataGetter, ReportBase):
         # чтобы понять, в каком случае совмещать таблицу с кластерами
         # и создавать отчет, а в каком его нет.
         # А также - какой subscriberID использовать.
-        statements_with_journal = self._create_stmts_with_journal_j_exist()
+        statements_with_journal = self._create_stmts_with_journal_j_exist_vector()
         # Далее слияние этой таблицы с кластерами
         # (готовые данные о местонахождении сотрудников).
         stmts_jrnl_clstrs = pd.merge(
@@ -137,15 +233,15 @@ class Report(ReportDataGetter, ReportBase):
         )
         # Вычисление дистанции между объектами и кластерами и фильтрация,
         # остаются только те строки, где дистанция в пределах RADIUS.
-        stmts_jrnl_clstrs = self._calculate_distance(stmts_jrnl_clstrs)
+        stmts_jrnl_clstrs = self._calculate_distance_vectorized(
+            stmts_jrnl_clstrs
+        )
         # Оставшиеся кластеры нужно объединить в один, если зазор между ними
         # в пределах MINUTES_BETWEEN_CLUSTERS. Это сокращает кол-во строк
         # в отчете, а также показывает количество посещений одного адреса.
-        stmts_jrnl_clstrs = stmts_jrnl_clstrs \
-            .groupby(by=['name_id', 'name', 'object_id', 'object', 'date'],
-                     group_keys=False) \
-            .apply(lambda x: self._consolidate_time_periods(x))
-
+        stmts_jrnl_clstrs = self._consolidate_time_periods_vectorized(
+            stmts_jrnl_clstrs
+        )
         # Основная задача отчета - показать длительность и кол-во посещений:
         stmts_jrnl_clstrs = self._set_count_and_duration(stmts_jrnl_clstrs)
         # Отчет сопровождается таблицей дубликатов выходов. Это когда к одному
@@ -187,6 +283,33 @@ class Report(ReportDataGetter, ReportBase):
         self.duplicated_attends = duplicated_attends
         self.report = self._merge_into_one_column(stmts_jrnl_clstrs)
         return self
+
+    def _create_stmts_with_journal_j_exist_vector(self) -> pd.DataFrame:
+        """Объединение таблицы заявленных выходов с таблицей журнала,
+        чтобы понять, в каком случае есть смысл запрашивать кластеры
+        и создавать отчет, а в каком его нет.
+        А также - какой subscriberID использовать."""
+        stmts = pd.merge(self._stmts,
+                         self._journal,
+                         how='left', on='name_id')
+
+        stmts['j_exist'] = ((stmts['date'] >= stmts['period_init']) &
+                            (stmts['date'] <= stmts['period_end']))
+        # все Больн./Отпуск/Увол. не нуждаются в отчете, им проставляем False
+        stmts.loc[stmts['object_id'] == 1, 'j_exist'] = False
+
+        # Фильтрация по наличию j_exist. Останутся все, где True,
+        # либо первый (без разницы, какой он там)
+        stmts = stmts[
+            (stmts['j_exist']) |
+            (~stmts.duplicated(subset=['name_id', 'object_id', 'date']))
+        ]
+        stmts = stmts.reset_index()[
+            ['name_id', 'name', 'object_id', 'object', 'longitude', 'latitude',
+             'date', 'statement', 'subscriberID', 'j_exist']
+        ]
+
+        return stmts
 
     def _create_stmts_with_journal_j_exist(self) -> pd.DataFrame:
         """Объединение таблицы заявленных выходов с таблицей журнала,
@@ -512,7 +635,6 @@ class Report(ReportDataGetter, ReportBase):
                 'duplicated_attends': dups}
 
 
-
 class OneEmployeeReport(OneEmployeeReportDataGetter, ReportBase):
     """
     ФОРМИРОВАНИЕ ИНДИВИДУАЛЬНОГО ОТЧЕТА
@@ -689,3 +811,11 @@ class OneEmployeeReport(OneEmployeeReportDataGetter, ReportBase):
         if len(result):
             return True
         return False
+
+
+if __name__ == "__main__":
+    s = time.perf_counter()
+    r = Report('2023-07-01', '2023-08-31', "ПВТ6")
+    e = time.perf_counter()
+    print(e-s)
+    pass
