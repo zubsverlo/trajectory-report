@@ -1,7 +1,7 @@
 # (основной запрос отчетов)
 import pandas as pd
 from trajectory_report.report import construct_select as cs
-from trajectory_report.database import DB_ENGINE
+from trajectory_report.database import DB_ENGINE, REDIS_CONN
 import datetime as dt
 from trajectory_report.report.ClusterGenerator import prepare_clusters
 from typing import Optional, List, Union, Any
@@ -34,7 +34,7 @@ class CachedReportDataGetter:
         self._date_from = dt.date.fromisoformat(str(date_from))
         self._date_to = dt.date.fromisoformat(str(date_to))
         includes_current_date: bool = dt.date.today() <= self._date_to
-        self.__r_conn = redis.Redis()
+        self.__r_conn = REDIS_CONN
         self.__cache_date_from = \
             ((dt.date.today().replace(day=1) - dt.timedelta(days=1))
              .replace(day=1))
@@ -259,8 +259,7 @@ def report_data_factory(date_from: Union[dt.date, str], *args, use_cache=True,
                         **kwargs
                         ) -> dict:
     try:
-        r = redis.Redis()
-        redis_available = r.ping()
+        redis_available = REDIS_CONN.ping()
     except redis.ConnectionError:
         redis_available = False
 
