@@ -45,55 +45,110 @@ def statements(date_from: dt.date,
     return sel
 
 
-def employee_schedules(name_ids: List[int]) -> Select:
+def employees(**kwargs) -> Select:
+    """Все сотрудники"""
+    sel: Select = select(
+        Employees.name_id,
+        Employees.name
+    )
+    return sel
+
+
+def objects(**kwargs) -> Select:
+    """Все объекты (подопечные)"""
+    sel: Select = select(
+        ObjectsSite.object_id,
+        ObjectsSite.name.label('object'),
+        ObjectsSite.latitude,
+        ObjectsSite.longitude
+    )
+    return sel
+
+
+def divisions(**kwargs) -> Select:
+    """Все объекты (подопечные)"""
+    sel: Select = select(
+        Division.id.label('division'),
+        Division.division.label('division_name')
+    )
+    return sel
+
+def statements_only(date_from: dt.date,
+                    date_to: Optional[dt.date] = None,
+                    **kwargs) -> Select:
+    """Получить все записи с заявленными выходами"""
+    sel = select(
+        Statements.name_id,
+        Statements.object_id,
+        Statements.date,
+        Statements.statement,
+        Statements.division) \
+        .where(Statements.date >= date_from)
+    if date_to:
+        sel = sel.where(Statements.date <= date_to)
+    return sel
+
+
+def employee_schedules(name_ids: Optional[List[int]] = None,
+                       **kwargs) -> Select:
     """Расписание сотрудников"""
     sel: Select = select(
         Employees.name_id,
         Employees.schedule
-    ).where(Employees.name_id.in_(name_ids))
+    )
+    if name_ids:
+        sel = sel.where(Employees.name_id.in_(name_ids))
     return sel
 
 
-def journal(name_ids: List[int]) -> Select:
+def journal(name_ids: Optional[List[int]] = None, **kwargs) -> Select:
     """Получить записи journal с привязками subscriberID, name_id к датам"""
     sel: Select = select(Journal.name_id,
                          Journal.subscriberID,
                          Journal.period_init,
-                         Journal.period_end) \
-        .where(Journal.name_id.in_(name_ids))
+                         Journal.period_end)
+    if name_ids:
+        sel = sel.where(Journal.name_id.in_(name_ids))
     return sel
 
 
 def serves(date_from: dt.date,
-           date_to: dt.date,
-           name_ids: List[int]) -> Select:
+           date_to: Optional[dt.date] = None,
+           name_ids: Optional[List[int]] = None,
+           **kwargs) -> Select:
     """Получить служебные записки из БД"""
     sel: Select = select(Serves.name_id,
                          Serves.object_id,
                          Serves.date,
                          Serves.approval,
                          ) \
-        .where(Serves.name_id.in_(name_ids)) \
-        .where(Serves.date >= date_from) \
-        .where(Serves.date <= date_to)
+        .where(Serves.date >= date_from)
+
+    if date_to:
+        sel = sel.where(Serves.date <= date_to)
+    if name_ids:
+        sel = sel.where(Serves.name_id.in_(name_ids))
     return sel
 
 
-def current_locations(subscriber_ids: List[int]) -> Select:
+def current_locations(subscriber_ids: Optional[List[int]] = None,
+                      **kwargs) -> Select:
     """get current locations by subscriber_ids"""
     sel: Select = select(Coordinates.subscriberID,
                          Coordinates.locationDate,
                          Coordinates.longitude,
                          Coordinates.latitude) \
-        .where(Coordinates.subscriberID.in_(subscriber_ids)) \
         .where(Coordinates.requestDate > dt.date.today()) \
         .where(Coordinates.locationDate != None)
+    if subscriber_ids:
+        sel = sel.where(Coordinates.subscriberID.in_(subscriber_ids))
     return sel
 
 
 def clusters(date_from: dt.date,
-             date_to: dt.date,
-             subscriber_ids: List[int]) -> Select:
+             date_to: Optional[dt.date] = None,
+             subscriber_ids: Optional[List[int]] = None,
+             **kwargs) -> Select:
     """Получить кластеры из БД"""
     sel: Select = select(
         Clusters.subscriberID,
@@ -103,9 +158,12 @@ def clusters(date_from: dt.date,
         Clusters.latitude,
         Clusters.leaving_datetime,
         Clusters.cluster) \
-        .where(Clusters.subscriberID.in_(subscriber_ids)) \
-        .where(Clusters.date >= date_from) \
-        .where(Clusters.date < date_to+dt.timedelta(days=1))
+        .where(Clusters.date >= date_from)
+
+    if date_to:
+        sel = sel.where(Clusters.date < date_to+dt.timedelta(days=1))
+    if subscriber_ids:
+        sel = sel.where(Clusters.subscriberID.in_(subscriber_ids))
     return sel
 
 

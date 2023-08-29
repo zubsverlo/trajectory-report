@@ -47,6 +47,7 @@ class Statements(Base):
     statement: Mapped[str] = mapped_column(CHAR(length=1))
     __table_args__ = (
         Index('StmtsNameDate', 'division', 'object_id', 'date', 'name_id'),
+        Index('statements_date', 'date'),
         UniqueConstraint('division', 'object_id', 'date', 'name_id',
                          name='_statements_unique'),
     )
