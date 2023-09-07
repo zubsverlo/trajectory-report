@@ -9,6 +9,11 @@ if os.getenv('ENV') == 'production':
 else:
     DB = os.getenv('DATABASE_DEVELOPMENT')
 
+if os.getenv('ENV') == 'production':
+    NEW_DB = os.getenv('NEW_DATABASE_PRODUCTION')
+else:
+    NEW_DB = os.getenv('NEW_DATABASE_DEVELOPMENT')
+
 REDIS = 'redis'
 
 TOKENS_MTS = {
