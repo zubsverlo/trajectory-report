@@ -9,6 +9,7 @@ if os.getenv('ENV') == 'production':
 else:
     DB = os.getenv('DATABASE_DEVELOPMENT')
 
+REDIS = 'redis'
 
 TOKENS_MTS = {
     "ГССП": os.getenv("TOKEN_MTS_GSSP"),
