@@ -299,7 +299,8 @@ class DatabaseReportDataGetter:
                 )
                 current_locations['date'] = current_locations['locationDate'] \
                     .apply(lambda x: x.date())
-            comment = pd.read_sql(cs.comment())
+            comment = pd.read_sql(cs.comment(division, name_ids))
+            frequency = pd.read_sql(cs.frequency(division, name_ids))
 
         if includes_current_date:
             try:
@@ -315,6 +316,8 @@ class DatabaseReportDataGetter:
         data['_schedules'] = schedules
         data['_serves'] = serves
         data['_clusters'] = clusters
+        data['_comment'] = comment
+        data['_frequency'] = frequency
         return data
 
 
