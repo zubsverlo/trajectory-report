@@ -169,3 +169,31 @@ class ObjectsSite(Base):
 
     def __repr__(self):
         return f"ObjID: {self.object_id}, Name: {self.name}"
+
+
+class Frequency(Base):
+    __tablename__ = 'frequency'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    division_id: Mapped[int]
+    employee_id: Mapped[int]
+    object_id: Mapped[int]
+    frequency: Mapped[int]
+    __table_args__ = (
+        Index('frequency_index', 'division_id', 'employee_id', 'object_id'),
+        UniqueConstraint('division_id', 'employee_id', 'object_id',
+                         name='_frequency')
+    )
+
+
+class Comment(Base):
+    __tablename__ = 'comment'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    division_id: Mapped[int]
+    employee_id: Mapped[int]
+    object_id: Mapped[int]
+    comment: Mapped[str] = mapped_column(CHAR(length=250))
+    __table_args__ = (
+        Index('comment_index', 'division_id', 'employee_id', 'object_id'),
+        UniqueConstraint('division_id', 'employee_id', 'object_id',
+                         name='_comment_and_frequency')
+    )

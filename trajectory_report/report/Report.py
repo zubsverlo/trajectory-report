@@ -206,6 +206,8 @@ class Report(ReportBase):
         self._schedules = data.get('_schedules')
         self._serves = data.get('_serves')
         self._clusters = data.get('_clusters')
+        self._comment = data.get('_comment')
+        self._frequency = data.get('_frequency')
 
         self._counts = counts
 
@@ -437,7 +439,6 @@ class Report(ReportBase):
         report.columns = report.columns.astype(str)
         report['name_id'] = report['name_id'].astype(int)
         report['object_id'] = report['object_id'].astype(int)
-        
         return report
 
     def xlsx(self, list_no_payments: list | None = None) -> io.BytesIO:
@@ -635,6 +636,50 @@ class Report(ReportBase):
                 'duplicated_attends': dups}
 
 
+class ReportWithAdditionalColumns(Report):
+    def __init__(self,
+                 date_from: Union[dt.date, str],
+                 date_to: Union[dt.date, str],
+                 division: Optional[Union[int, str]] = None,
+                 name_ids: Optional[List[int]] = None,
+                 object_ids: Optional[List[int]] = None,
+                 counts: bool = False,
+                 use_cache: bool = True
+                 ):
+        super().__init__(date_from, date_to, division, name_ids,
+                         object_ids, counts, use_cache)
+
+    @property
+    def horizontal_report(self) -> pd.DataFrame:
+        """Представление отчета в горизонтальном виде"""
+
+        # Чтобы отображались все дни, независимо от наличия в эти дни
+        # каких-либо данных, нужно составить "пустой" DF с этими датами
+        # и совместить его с отчетом.
+
+        report = super().horizontal_report
+        # здесь нужно запросить комментарии и частоту посещений,
+        # совместить их с основной таблицей отчета, а затем -
+        # вставить эти столбцы на нужные позиции в таблице.
+
+        # главная задача - определить, где будут собираться эти данные.
+        # если они собираются в этом классе, чтобы затем присоединиться, то это
+        # нарушает принципы SOLID. Возможно, нужен также отдельный класс, который
+        # добавляет в объект эти данные. но отсюда возникают дополнительные
+        # factories, хотя суть всего - добавить пару столбцов.
+        # но это единственно правильный вариант, который оставит код чистым.
+        # пусть этот вопрос решает report_data_factory.
+        comments_and_frequency = pd.merge(self._comment, self._frequency,
+                                          on=['name_id', 'object_id'],
+                                          how='outer')
+        report = pd.merge(report, comments_and_frequency,
+                          on=['name_id', 'object_id'], how='left')
+        report.insert(2, 'comment', report.pop('comment'))
+        report.insert(5, 'frequency', report.pop('frequency'))
+        report = report.fillna('')
+        return report
+
+
 class OneEmployeeReport(OneEmployeeReportDataGetter, ReportBase):
     """
     ФОРМИРОВАНИЕ ИНДИВИДУАЛЬНОГО ОТЧЕТА
@@ -665,7 +710,7 @@ class OneEmployeeReport(OneEmployeeReportDataGetter, ReportBase):
 
         # Вычисление дистанции между объектами и кластерами и фильтрация,
         # остаются только те строки, где дистанция в пределах RADIUS.
-        stmts_clstrs = self._calculate_distance(stmts_clstrs)
+        stmts_clstrs = self._calculate_distance_vectorized(stmts_clstrs)
 
         ###
         # Здесь возможно, что df останется пустым.
@@ -677,10 +722,11 @@ class OneEmployeeReport(OneEmployeeReportDataGetter, ReportBase):
         # Оставшиеся кластеры нужно объединить в один, если зазор между ними
         # в пределах MINUTES_BETWEEN_CLUSTERS. Это сокращает кол-во строк
         # в отчете, а также показывает количество посещений одного адреса.
-        stmts_clstrs = stmts_clstrs \
-            .groupby(by=['name_id', 'name', 'object_id', 'object', 'date'],
-                     group_keys=False) \
-            .apply(lambda x: self._consolidate_time_periods(x))
+        # stmts_clstrs = stmts_clstrs \
+        #     .groupby(by=['name_id', 'name', 'object_id', 'object', 'date'],
+        #              group_keys=False) \
+        #     .apply(lambda x: self._consolidate_time_periods(x))
+        stmts_clstrs = self._consolidate_time_periods_vectorized(stmts_clstrs)
 
         if not len(stmts_clstrs):
             return None
@@ -815,7 +861,8 @@ class OneEmployeeReport(OneEmployeeReportDataGetter, ReportBase):
 
 if __name__ == "__main__":
     s = time.perf_counter()
-    r = Report('2023-07-01', '2023-08-31', "ПВТ6")
+    r = ReportWithAdditionalColumns('2023-08-01', '2023-08-31', "ПВТ1")
     e = time.perf_counter()
+    a = r.as_json_dict
     print(e-s)
     pass

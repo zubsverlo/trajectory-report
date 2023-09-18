@@ -6,9 +6,13 @@ import datetime as dt
 from trajectory_report.report.ClusterGenerator import prepare_clusters
 from typing import Optional, List, Union, Any
 from trajectory_report.exceptions import ReportException
+from dateutil.relativedelta import relativedelta
+from sqlalchemy import select
+from trajectory_report.models import Statements, Division
 import redis
 import pickle
 import bz2
+import json
 
 
 class CachedReportDataGetter:
@@ -21,8 +25,54 @@ class CachedReportDataGetter:
         'serves': cs.serves,
         'clusters': cs.clusters,
         'divisions': cs.divisions,
-        'current_locations': cs.current_locations
+        'current_locations': cs.current_locations,
+        'comment': cs.comment,
+        'frequency': cs.frequency
     }
+
+    def __init__(self):
+        self.__current_db_connection = None
+        self._r_conn = REDIS_CONN
+
+        # statements expire date
+        one_month = relativedelta(months=1, day=1, hour=0, minute=0, second=0)
+        one_day = relativedelta(days=1, hour=0, minute=0, second=0)
+        self.__next_month_midnight: int = int((dt.datetime.now() +
+                                               one_month).timestamp())
+        self.__eight_hours: int = int(
+            (dt.datetime.now()+dt.timedelta(hours=8)).timestamp()
+        )
+        self.__prev_month: dt.date = dt.date.today() - one_month
+        self.__current_month = ((dt.date.today() + one_month)
+                                - dt.timedelta(days=1))
+        self.__current_day = int((dt.datetime.now()+one_day).timestamp())
+        self.expire_time_dict = {
+            'employees': self.__eight_hours,
+            'schedules': self.__eight_hours,
+            'objects': self.__eight_hours,
+            'journal': self.__current_day,
+            'serves': self.__eight_hours,
+            'clusters': self.__current_day,
+            'divisions': self.__eight_hours,
+            'current_locations': dt.datetime.now()+dt.timedelta(seconds=200),
+            'statements': self.__next_month_midnight,
+            'comment': self.__current_day,
+            'frequency': self.__current_day
+        }
+
+    @property
+    def _connection(self):
+        if not self.__current_db_connection:
+            self._current_db_connection = DB_ENGINE.connect()
+            return self._current_db_connection
+        if not self.__current_db_connection.connection.connection.is_connected():
+            self.__current_db_connection.connection.connection.reconnect()
+        return self.__current_db_connection
+
+    def _connection_close(self):
+        # после инициализации закрыть соединение с бд, если оно есть:
+        if self.__current_db_connection:
+            self.__current_db_connection.close()
 
     def get_data(self,
                  date_from: Union[dt.date, str],
@@ -33,46 +83,29 @@ class CachedReportDataGetter:
                  ) -> dict:
         self._date_from = dt.date.fromisoformat(str(date_from))
         self._date_to = dt.date.fromisoformat(str(date_to))
+
         includes_current_date: bool = dt.date.today() <= self._date_to
-        self.__r_conn = REDIS_CONN
-        self.__cache_date_from = \
-            ((dt.date.today().replace(day=1) - dt.timedelta(days=1))
-             .replace(day=1))
+
+        divisions: dict = self.__get_divisions()
+        if isinstance(division, str):
+            division = divisions.get(division)
 
         stmts = self.__get_statements(division, name_ids, object_ids)
-        self.__name_ids = stmts.name_id.unique().tolist()
+        name_ids = stmts.name_id.unique().tolist()
 
-        journal = self.__get_cached_or_updated('journal')
-        journal = self.__filter_by_column(journal, ['name_id'])
-        journal.loc['period_end'] = journal['period_end'].fillna(
-            dt.date.today())
-        self.__subs_ids = journal.subscriberID.unique().tolist()
+        journal = self.__get_journal(name_ids)
+        subs_ids = journal.subscriberID.unique().tolist()
 
-        schedules = self.__get_cached_or_updated('schedules')
-        schedules = self.__filter_by_column(schedules, ['name_id'])
+        schedules = self.__get_schedules(name_ids)
 
-        serves = self.__get_cached_or_updated('serves')
-        serves = self.__filter_by_column(serves,
-                                               ['name_id', 'date_from',
-                                                'date_to'])
+        serves = self.__get_serves(name_ids)
 
-        clusters = self.__get_cached_or_updated('clusters')
-        clusters = self.__filter_by_column(clusters,
-                                           ['subscriberID', 'date_from',
-                                            'date_to'])
+        clusters = self.__get_clusters(subs_ids, includes_current_date)
 
-        if includes_current_date:
-            current_locs = self.__get_cached_or_updated('current_locations')
-            current_locs = self.__filter_by_column(current_locs,
-                                                   'subscriberID')
-            current_locs['date'] = (current_locs['locationDate']
-                                    .apply(lambda x: x.date()))
-            try:
-                clusters = pd.concat([clusters,
-                                            prepare_clusters(current_locs)])
-            except (TypeError, AttributeError):
-                print("Кластеры по текущим локациям не были сформированы. "
-                      "Возможно, из-за недостатка кол-ва локаций.")
+        comment = self.__get_comment(name_ids)
+        frequency = self.__get_frequency(name_ids)
+
+        self._connection_close()
 
         data = dict()
         data['_stmts'] = stmts
@@ -80,21 +113,95 @@ class CachedReportDataGetter:
         data['_schedules'] = schedules
         data['_serves'] = serves
         data['_clusters'] = clusters
+        data['_comment'] = comment
+        data['_frequency'] = frequency
         return data
 
+    def __get_divisions(self) -> dict:
+        fetched = self._r_conn.get('divisions')
+        if not fetched:
+            res = self._connection.execute(select(Division.id, Division.division)).all()
+            fetched = json.dumps({i.division: i.id for i in res})
+            self._r_conn.set('divisions', fetched)
+            self._r_conn.expireat('divisions', self.__current_day)
+        return json.loads(fetched)
+
+    def __get_clusters(self, subs_ids, includes_current_date) -> pd.DataFrame:
+        clusters = self.__get_cached_or_updated('clusters')
+        clusters = clusters[clusters['subscriberID'].isin(subs_ids)]
+        clusters = clusters[clusters['date'] >= self._date_from]
+        clusters = clusters[clusters['date'] <= self._date_to]
+
+        if includes_current_date:
+            curr_locs = self.__get_cached_or_updated('current_locations')
+            curr_locs = curr_locs[curr_locs['subscriberID'].isin(subs_ids)]
+            curr_locs['date'] = (curr_locs['locationDate']
+                                 .apply(lambda x: x.date()))
+            try:
+                clusters = pd.concat([clusters, prepare_clusters(curr_locs)])
+            except (TypeError, AttributeError):
+                print("Кластеры по текущим локациям не были сформированы. "
+                      "Возможно, из-за недостатка кол-ва локаций.")
+        return clusters
+
+    def __get_serves(self, name_ids) -> pd.DataFrame:
+        serves = self.__get_cached_or_updated('serves')
+        serves = serves[serves['name_id'].isin(name_ids)]
+        serves = serves[serves['date'] >= self._date_from]
+        serves = serves[serves['date'] <= self._date_to]
+        return serves
+
+    def __get_schedules(self, name_ids) -> pd.DataFrame:
+        schedules = self.__get_cached_or_updated('schedules')
+        schedules = schedules[schedules['name_id'].isin(name_ids)]
+        return schedules
+
+    def __get_journal(self, name_ids) -> pd.DataFrame:
+        journal = self.__get_cached_or_updated('journal')
+        journal = journal[journal['name_id'].isin(name_ids)]
+        journal.loc['period_end'] = journal['period_end'].fillna(
+            dt.date.today())
+        return journal
+
     def __get_statements(self,
-                         division: Optional[Union[int, str]] = None,
+                         division: Optional[int] = None,
                          name_ids: Optional[List[int]] = None,
                          object_ids: Optional[List[int]] = None
                          ) -> pd.DataFrame:
-        statements = self.__get_cached_or_updated('statements')
-        divisions = self.__get_cached_or_updated('divisions')
-        statements = pd.merge(statements, divisions, on='division')
-        if isinstance(division, str):
-            statements = statements[statements['division_name'] == division]
-        if isinstance(division, int):
-            statements = statements[statements['division'] == division]
+        cached = self._r_conn.hgetall('statements')
+        if not cached:
+            res = self._connection.execute(select(
+                Statements.division,
+                Statements.name_id,
+                Statements.object_id,
+                Statements.date,
+                Statements.statement
+            ).where(Statements.date >= self.__prev_month)).all()
+            res = {
+                json.dumps(
+                    (
+                    i.division, i.name_id, i.object_id, i.date.isoformat())
+                ): i.statement.encode()
+                for i in res}
+            self._r_conn.hmset('statements', res)
+            self._r_conn.expireat('statements',
+                                   self.expire_time_dict['statements'])
+            cached = res
+        cached = {
+            tuple(json.loads(k)): v.decode('utf-8') for k, v in cached.items()
+        }
+        index = pd.MultiIndex.from_tuples(
+            cached.keys(),
+            names=['division', 'name_id', 'object_id', 'date']
+        )
+        statements = pd.DataFrame(
+            list(cached.values()),
+            index=index, columns=['statement']
+        ).reset_index()
+        statements['date'] = statements.date.apply(lambda x: dt.date.fromisoformat(x))
 
+        if division:
+            statements = statements[statements['division'] == division]
         if name_ids:
             statements = statements[statements['name_id'].isin(name_ids)]
         if object_ids:
@@ -112,43 +219,38 @@ class CachedReportDataGetter:
                            'longitude', 'latitude', 'date', 'statement',
                            'division']]
 
-    def __filter_by_column(self, obj: pd.DataFrame,
-                           filter: List[str]):
-        """Фильтр для собранного из кеша dataframe с указанием полей для
-        заполнения и фильтрации"""
-        if 'name_id' in filter:
-            obj = obj[obj['name_id'].isin(self.__name_ids)]
-        if 'subscriberID' in filter:
-            obj = obj[obj['subscriberID'].isin(self.__subs_ids)]
-        if 'date_from' in filter:
-            obj = obj[obj['date'] >= self._date_from]
-        if 'date_to' in filter:
-            obj = obj[obj['date'] <= self._date_to]
+    def __get_comment(self, name_ids: List[int]):
+        comment = self.__get_cached_or_updated('comment')
+        comment = comment[comment['name_id'].isin(name_ids)]
+        return comment
 
-        return obj
+    def __get_frequency(self, name_ids: List[int]):
+        frequency = self.__get_cached_or_updated('frequency')
+        frequency = frequency[frequency['name_id'].isin(name_ids)]
+        return frequency
 
     def __get_cached_or_updated(self, key):
         res = self.__get_from_redis(key)
         if res is None:
-            with DB_ENGINE.connect() as conn:
-                res = pd.read_sql(
-                    CachedReportDataGetter.CACHED_SELECTS[key](
-                        date_from=self.__cache_date_from),
-                    conn
+            res = pd.read_sql(
+                CachedReportDataGetter.CACHED_SELECTS[key](
+                    date_from=self.__prev_month),
+                self._connection
                 )
             self.__send_to_redis(key, res)
         return res
 
     def __get_from_redis(self, key: str) -> Any:
         """"Fetch from redis by key, decompress and unpickle"""
-        fetched = self.__r_conn.get(key)
+        fetched = self._r_conn.get(key)
         if not fetched:
             return None
         return pickle.loads(bz2.decompress(fetched))
 
     def __send_to_redis(self, key: str, obj: Any) -> bool:
         """Compress, pickle and set as a key"""
-        self.__r_conn.set(key, bz2.compress(pickle.dumps(obj)))
+        self._r_conn.set(key, bz2.compress(pickle.dumps(obj)))
+        self._r_conn.expireat(key, self.expire_time_dict.get(key))
         return True
 
 
@@ -197,6 +299,7 @@ class DatabaseReportDataGetter:
                 )
                 current_locations['date'] = current_locations['locationDate'] \
                     .apply(lambda x: x.date())
+            comment = pd.read_sql(cs.comment())
 
         if includes_current_date:
             try:

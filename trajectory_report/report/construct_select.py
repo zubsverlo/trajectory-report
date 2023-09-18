@@ -11,7 +11,9 @@ from trajectory_report.models import (Statements,
                                       Journal,
                                       Serves,
                                       Coordinates,
-                                      Clusters)
+                                      Clusters,
+                                      Comment,
+                                      Frequency)
 
 
 def statements(date_from: dt.date,
@@ -72,6 +74,7 @@ def divisions(**kwargs) -> Select:
         Division.division.label('division_name')
     )
     return sel
+
 
 def statements_only(date_from: dt.date,
                     date_to: Optional[dt.date] = None,
@@ -213,4 +216,36 @@ def journal_one_emp(name_id: int) -> Select:
                          Journal.period_init,
                          Journal.period_end) \
         .where(Journal.name_id == name_id)
+    return sel
+
+
+def comment(division: Optional[int] = None,
+            name_ids: Optional[List[int]] = None,
+            **kwargs) -> Select:
+    sel: Select = select(Comment.employee_id.label('name_id'),
+                         Comment.object_id,
+                         Comment.comment)
+    if isinstance(division, int):
+        sel = sel.where(Statements.division == division)
+    if isinstance(division, str):
+        sel = sel.join(Division, Comment.division_id == Division.id)
+        sel = sel.where(Division.division == division)
+    if name_ids:
+        sel = sel.where(Frequency.employee_id.in_(name_ids))
+    return sel
+
+
+def frequency(division: Optional[int] = None,
+              name_ids: Optional[List[int]] = None,
+              **kwargs) -> Select:
+    sel: Select = select(Frequency.employee_id.label('name_id'),
+                         Frequency.object_id,
+                         Frequency.frequency)
+    if isinstance(division, int):
+        sel = sel.where(Statements.division == division)
+    if isinstance(division, str):
+        sel = sel.join(Division, Frequency.division_id == Division.id)
+        sel = sel.where(Division.division == division)
+    if name_ids:
+        sel = sel.where(Frequency.employee_id.in_(name_ids))
     return sel
