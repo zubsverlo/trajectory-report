@@ -170,25 +170,27 @@ class CachedReportDataGetter:
                          ) -> pd.DataFrame:
         cached = self._r_conn.hgetall('statements')
         if not cached:
-            res = self._connection.execute(select(
+            db_res = self._connection.execute(select(
                 Statements.division,
                 Statements.name_id,
                 Statements.object_id,
                 Statements.date,
                 Statements.statement
             ).where(Statements.date >= self.__prev_month)).all()
-            res = {
-                json.dumps(
-                    (
-                    i.division, i.name_id, i.object_id, i.date.isoformat())
-                ): i.statement.encode()
-                for i in res}
+            res = {}
+            for i in db_res:
+                key = (f"{i.division},{i.name_id},"
+                       f"{i.object_id},{i.date.isoformat()}").encode()
+                val = i.statement.encode()
+                res[key] = val
+
             self._r_conn.hmset('statements', res)
             self._r_conn.expireat('statements',
-                                   self.expire_time_dict['statements'])
+                                  self.expire_time_dict['statements'])
             cached = res
         cached = {
-            tuple(json.loads(k)): v.decode('utf-8') for k, v in cached.items()
+            tuple(k.decode().split(',')): v.decode()
+            for k, v in cached.items()
         }
         index = pd.MultiIndex.from_tuples(
             cached.keys(),
@@ -198,6 +200,8 @@ class CachedReportDataGetter:
             list(cached.values()),
             index=index, columns=['statement']
         ).reset_index()
+        statements[['division', 'name_id', 'object_id']] = statements[
+            ['division', 'name_id', 'object_id']].astype(int)
         statements['date'] = statements.date.apply(lambda x: dt.date.fromisoformat(x))
 
         if division:
@@ -209,6 +213,10 @@ class CachedReportDataGetter:
 
         statements = statements[(statements['date'] >= self._date_from) &
                                 (statements['date'] <= self._date_to)]
+
+        if not len(statements):
+            raise ReportException(f'Не найдено заявленных выходов в период '
+                                  f'с {self._date_from} до {self._date_to}')
 
         objects = self.__get_cached_or_updated('objects')
         employees = self.__get_cached_or_updated('employees')
@@ -280,7 +288,7 @@ class DatabaseReportDataGetter:
             ), conn)
             if not len(stmts):
                 raise ReportException(f'Не найдено заявленных выходов в период '
-                                 f'с {date_from} до {date_to}')
+                                      f'с {date_from} до {date_to}')
             name_ids = stmts.name_id.unique().tolist()
 
             journal = pd.read_sql(cs.journal(name_ids), conn)
@@ -299,8 +307,8 @@ class DatabaseReportDataGetter:
                 )
                 current_locations['date'] = current_locations['locationDate'] \
                     .apply(lambda x: x.date())
-            comment = pd.read_sql(cs.comment(division, name_ids))
-            frequency = pd.read_sql(cs.frequency(division, name_ids))
+            comment = pd.read_sql(cs.comment(division, name_ids), conn)
+            frequency = pd.read_sql(cs.frequency(division, name_ids), conn)
 
         if includes_current_date:
             try:

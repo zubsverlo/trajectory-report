@@ -231,7 +231,7 @@ def comment(division: Optional[int] = None,
         sel = sel.join(Division, Comment.division_id == Division.id)
         sel = sel.where(Division.division == division)
     if name_ids:
-        sel = sel.where(Frequency.employee_id.in_(name_ids))
+        sel = sel.where(Comment.employee_id.in_(name_ids))
     return sel
 
 
